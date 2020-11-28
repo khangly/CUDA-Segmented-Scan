@@ -112,22 +112,27 @@ __global__ void prescan(float *g_idata, float *g_odata, int n) {
 // Effect: Sets g_odata to be the segmented scan of g_idata with the flags flag_orig
 //         Does not modify g_idata, or flag_orig
 __global__ void segscan(float *g_idata, float *g_odata,
-			float *flag_orig, int n){
-
-  int thid = blockIdx.x*blockDim.x + threadIdx.x;
+                        float *flag_orig, float *flag_scan, float* sums, float* sums_flags, int n){
+  int thid = threadIdx.x;
+  size_t block_offset = blockIdx.x * blockDim.x * 2;
+  g_idata += block_offset;
+  g_odata += block_offset;
+  flag_orig += block_offset;
+  flag_scan += block_offset;
   int offset = 1;
 
   extern __shared__ float shmem[];
   float * temp = &shmem[0];
   float * flags = &shmem[n];
+  float * flags_temp = &shmem[2*n];
   
   __syncthreads();
 
   // load input into shared memory
   temp[2*thid] = (2*thid < n) ? g_idata[2*thid] : 0;
-  temp[2*thid+1] = (2*thid+1 < n) ? g_idata[2*thid+1] : 0; 
-  flags[2*thid] = (2*thid < n) ? flag_orig[2*thid] : 0;
-  flags[2*thid+1] = (2*thid+1 < n) ? flag_orig[2*thid+1] : 0; 
+  temp[2*thid+1] = (2*thid+1 < n) ? g_idata[2*thid+1] : 0;
+  flags_temp[2*thid] = flags[2*thid] = (2*thid < n) ? flag_orig[2*thid] : 0;
+  flags_temp[2*thid+1] = flags[2*thid+1] = (2*thid+1 < n) ? flag_orig[2*thid+1] : 0;
 
   // build sum in place up the tree
   for (int d = n>>1; d > 0; d >>= 1) {
@@ -136,6 +141,7 @@ __global__ void segscan(float *g_idata, float *g_odata,
       int ai = offset*(2*thid+1)-1;  // k + 2^d - 1
       int bi = offset*(2*thid+2)-1;  // k + 2^(d+1) - 1
       if (bi < n && ai < n) {
+        flags_temp[bi] = fmax(flags_temp[ai], flags_temp[bi]);
 	if (flags[bi] == 0.0) {
 	  temp[bi] += temp[ai];
 	}
@@ -147,7 +153,8 @@ __global__ void segscan(float *g_idata, float *g_odata,
   
   // clear the last element
   if (thid == 0) {
-    temp[n - 1] = 0;  
+    temp[n - 1] = 0;
+    flags_temp[n - 1] = 0;
   } 
 
   // traverse down tree & build scan
@@ -159,6 +166,11 @@ __global__ void segscan(float *g_idata, float *g_odata,
       int bi = offset*(2*thid+2)-1;  // k + 2^d+1 - 1
       float t = temp[ai];
       temp[ai] = temp[bi];
+      if (ai < n && bi < n) {
+        float tf = flags_temp[ai];
+        flags_temp[ai] = flags_temp[bi];
+        flags_temp[bi] = fmax(tf, flags_temp[bi]);
+      }
       if (flag_orig[ai+1] == 1.0) {
 	temp[bi] = 0;
       } else if (flags[ai] == 1.0) {
@@ -175,13 +187,31 @@ __global__ void segscan(float *g_idata, float *g_odata,
   // write results to device memory
   if (2*thid < n) {
     g_odata[2*thid] = temp[2*thid] + g_idata[2*thid];
+    flag_scan[2*thid] = fmax(flags_temp[2*thid], flag_orig[2*thid]);
   }
   if (2*thid+1 < n) {
-    g_odata[2*thid+1] = temp[2*thid+1] + g_idata[2*thid+1]; 
+    g_odata[2*thid+1] = temp[2*thid+1] + g_idata[2*thid+1];
+    flag_scan[2*thid+1] = fmax(flags_temp[2*thid+1], flag_orig[2*thid+1]);
   }
 
   __syncthreads();
 
+  if (thid == 0) {
+    if (sums != nullptr)
+      sums[blockIdx.x] = g_odata[blockDim.x * 2 - 1];
+    if (sums_flags != nullptr)
+      sums_flags[blockIdx.x] = flag_scan[blockDim.x * 2 - 1];
+  }
+}
+
+__global__ void add_offsets(float *x, float* flags, float* sums, int n){
+  size_t tid = threadIdx.x + blockIdx.x*blockDim.x;
+
+  if (tid < n) {
+    // TODO: add the `chunk_id-1`'th element of `sums`
+    //       to every element, according to its `chunk_id`.
+    x[tid] += (blockIdx.x / 2 > 0 ? sums[blockIdx.x / 2 - 1] : 0) * (1 - flags[tid]);
+  }
 }
 
 
@@ -199,7 +229,7 @@ int main(int argc, char** argv) {
   size_t n = std::atoi(argv[1]);
   int np2 = powf(2, ceil(log2f(n))); // next power-of-2 >= n
   
-  assert(n <= 2048);
+//  assert(n <= 2048);
 
   // 1 thread for every 2 elements (round up)
   size_t blocksize = std::min<size_t>(np2/2, 1024);
@@ -262,6 +292,17 @@ int main(int argc, char** argv) {
   CUDA_CHECK(cudaMemcpy(d_f, flags.data(), sizeof(float)*n,
 			cudaMemcpyHostToDevice));
 
+  std::vector<float> flags_scan(n);
+  float* d_fs;
+  CUDA_CHECK(cudaMalloc(&d_fs, sizeof(float)*np2));
+
+  std::vector<float> sums(nblocks), sumscan(nblocks), sums_flags(nblocks), sums_fs(nblocks);
+  float* d_sums, *d_sumscan, *d_sums_flags, *d_sums_fs;
+  CUDA_CHECK(cudaMalloc(&d_sums, sizeof(float)*nblocks));
+  CUDA_CHECK(cudaMalloc(&d_sumscan, sizeof(float)*nblocks));
+  CUDA_CHECK(cudaMalloc(&d_sums_flags, sizeof(float)*nblocks));
+  CUDA_CHECK(cudaMalloc(&d_sums_fs, sizeof(float)*nblocks));
+
   cudaMemset(d_x, 0.0, sizeof(float)*np2);
   cudaMemcpy(d_x, x.data(), sizeof(float)*n, cudaMemcpyHostToDevice);
   cudaMemset(d_y, 0.0, sizeof(float)*np2);
@@ -271,17 +312,41 @@ int main(int argc, char** argv) {
   printf("calling segscan<<<%d,%d>>> of %d elements.\n",
 	 nblocks, blocksize, n);
   begin = std::chrono::high_resolution_clock::now();
-  segscan<<<nblocks, blocksize, 2*n*sizeof(float)>>>(d_x, d_y, d_f, n);
+  segscan<<<nblocks, blocksize, 6*blocksize*sizeof(float)>>>(d_x, d_y, d_f, d_fs, d_sums, d_sums_flags, blocksize * 2);
+
+  segscan<<<1, (nblocks+2-1)/2, 3*nblocks*sizeof(float)>>>(d_sums, d_sumscan, d_sums_flags, d_sums_fs, nullptr, nullptr, nblocks);
+
+  add_offsets<<<(np2+blocksize-1)/blocksize, blocksize>>>(d_y, d_fs, d_sumscan, np2);
 
   cudaDeviceSynchronize();
   end = std::chrono::high_resolution_clock::now();
   float duration_gpu = std::chrono::duration<double>(end - begin).count();
 
   cudaMemcpy(rv.data(), d_y, sizeof(float)*n, cudaMemcpyDeviceToHost);
+//  cudaMemcpy(flags_scan.data(), d_fs, sizeof(float)*n, cudaMemcpyDeviceToHost);
+//  cudaMemcpy(sums.data(), d_sums, sizeof(float)*nblocks, cudaMemcpyDeviceToHost);
+//  cudaMemcpy(sumscan.data(), d_sumscan, sizeof(float)*nblocks, cudaMemcpyDeviceToHost);
+//  cudaMemcpy(sums_flags.data(), d_sums_flags, sizeof(float)*nblocks, cudaMemcpyDeviceToHost);
+//  cudaMemcpy(sums_fs.data(), d_sums_fs, sizeof(float)*nblocks, cudaMemcpyDeviceToHost);
   cudaDeviceSynchronize();
-  printf("Flags are: ");
-  print(flags);
-  printf("\n");
+//  printf("Flags are: ");
+//  print(flags);
+//  printf("\n");
+//  printf("Flags scan are: ");
+//  print(flags_scan);
+//  printf("\n");
+//  printf("Sums are: ");
+//  print(sums);
+//  printf("\n");
+//  printf("Sums scan are: ");
+//  print(sumscan);
+//  printf("\n");
+//  printf("Sums flags are: ");
+//  print(sums_flags);
+//  printf("\n");
+//  printf("Sums fs are: ");
+//  print(sums_fs);
+//  printf("\n");
   checkResult(x, rv, rv_cpu, duration_gpu, duration_cpu);
   
   cudaFree(d_x);

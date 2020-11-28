@@ -63,12 +63,12 @@ void checkResult (std::vector <float>& x,
   } else {
     printf("scan FAILURE!\n");
   }
-    printf("input:     ");
-    print(x);
-    printf("\nexpected: ");
-    print(rv_cpu);
-    printf("\nfound:    ");
-    print(rv);
-    printf("\n");
+//    printf("input:     ");
+//    print(x);
+//    printf("\nexpected: ");
+//    print(rv_cpu);
+//    printf("\nfound:    ");
+//    print(rv);
+//    printf("\n");
     // }
 }
