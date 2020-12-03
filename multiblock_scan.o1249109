@@ -1,0 +1,64 @@
+calling segscan<<<1,512>>> of 1024 elements.
+0.047212 ms GPU, 0.003094 ms CPU
+
+calling segscan<<<1,1024>>> of 2048 elements.
+0.040264 ms GPU, 0.006437 ms CPU
+
+calling segscan<<<2,1024>>> of 4096 elements.
+0.070609 ms GPU, 0.012381 ms CPU
+
+calling segscan<<<4,1024>>> of 8192 elements.
+0.072924 ms GPU, 0.025293 ms CPU
+
+calling segscan<<<8,1024>>> of 16384 elements.
+0.070199 ms GPU, 0.047891 ms CPU
+
+calling segscan<<<16,1024>>> of 32768 elements.
+0.073135 ms GPU, 0.092839 ms CPU
+
+calling segscan<<<32,1024>>> of 65536 elements.
+0.075151 ms GPU, 0.242813 ms CPU
+
+calling segscan<<<64,1024>>> of 131072 elements.
+0.604582 ms GPU, 0.385061 ms CPU
+
+calling segscan<<<128,1024>>> of 262144 elements.
+0.880866 ms GPU, 0.864841 ms CPU
+
+calling segscan<<<256,1024>>> of 524288 elements.
+1.421679 ms GPU, 1.734201 ms CPU
+
+calling segscan<<<512,1024>>> of 1048576 elements.
+1.439439 ms GPU, 3.558680 ms CPU
+
+calling segscan<<<1024,1024>>> of 2097152 elements.
+1.572300 ms GPU, 7.040927 ms CPU
+
+calling segscan<<<2048,1024>>> of 4194304 elements.
+1.817587 ms GPU, 14.643268 ms CPU
+
+calling segscan<<<4096,1024>>> of 8388608 elements.
+2.251725 ms GPU, 27.947868 ms CPU
+
+calling segscan<<<8192,1024>>> of 16777216 elements.
+3.083663 ms GPU, 55.595745 ms CPU
+
+calling segscan<<<16384,1024>>> of 33554432 elements.
+4.664458 ms GPU, 110.077415 ms CPU
+
+calling segscan<<<32768,1024>>> of 67108864 elements.
+7.655427 ms GPU, 219.495697 ms CPU
+
+calling segscan<<<65536,1024>>> of 134217728 elements.
+14.050691 ms GPU, 426.514557 ms CPU
+
+calling segscan<<<131072,1024>>> of 268435456 elements.
+24.516857 ms GPU, 887.451843 ms CPU
+
+calling segscan<<<262144,1024>>> of 536870912 elements.
+46.835793 ms GPU, 1678.225708 ms CPU
+
+GPUassert: out of memory segscan.cu 228
+calling segscan<<<524288,1024>>> of 1073741824 elements.
+srun: error: cgpu04: task 0: Exited with exit code 2
+srun: Terminating job step 1249109.20
