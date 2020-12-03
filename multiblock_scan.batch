@@ -1,0 +1,12 @@
+#!/bin/bash -l
+#SBATCH -N 1
+#SBATCH -c 10
+#SBATCH -G 1
+#SBATCH -C gpu
+#SBATCH -t 5:00
+#SBATCH -J multiblock_scan
+#SBATCH -o multiblock_scan.o%j
+#SBATCH -p debug
+
+echo "srun -N 1 -n 1 ./multiblock_scan"
+srun -N 1 -n 1 ./multiblock_scan $((2*1024))

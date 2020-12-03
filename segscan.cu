@@ -219,6 +219,31 @@ float run_scan(std::vector<float> inv, std::vector<float> outv) {
   return 0.0;
 }
 
+float* run_segscan(float* d_x, float* d_f, size_t n) {
+  int np2 = powf(2, ceil(log2f(n)));
+  size_t blocksize = std::min<size_t>(np2/2, 1024);
+  size_t nblocks = (np2/2) / blocksize;
+  float *d_y, *d_fs;
+  CUDA_CHECK(cudaMalloc(&d_y, sizeof(float)*np2));
+  CUDA_CHECK(cudaMalloc(&d_fs, sizeof(float)*np2));
+  if (nblocks == 1) {
+    segscan<<<nblocks, blocksize, 6*blocksize*sizeof(float)>>>(d_x, d_y, d_f, d_fs, nullptr, nullptr, 2*blocksize);
+    cudaFree(d_fs);
+    return d_y;
+  }
+  float *d_sums, *d_sums_f;
+  CUDA_CHECK(cudaMalloc(&d_sums, sizeof(float)*nblocks));
+  CUDA_CHECK(cudaMalloc(&d_sums_f, sizeof(float)*nblocks));
+  segscan<<<nblocks, blocksize, 6*blocksize*sizeof(float)>>>(d_x, d_y, d_f, d_fs, d_sums, d_sums_f, 2*blocksize);
+  float *d_sumscan = run_segscan(d_sums, d_sums_f, nblocks);
+  cudaFree(d_sums);
+  cudaFree(d_sums_f);
+  add_offsets<<<(np2+blocksize-1)/blocksize, blocksize>>>(d_y, d_fs, d_sumscan, np2);
+  cudaFree(d_fs);
+  cudaFree(d_sumscan);
+  return d_y;
+}
+
 int main(int argc, char** argv) {
 
   if (argc < 2) {
@@ -246,10 +271,10 @@ int main(int argc, char** argv) {
   float* d_y;
 
   CUDA_CHECK(cudaMalloc(&d_x, sizeof(float)*np2));
-  CUDA_CHECK(cudaMalloc(&d_y, sizeof(float)*np2));
+//  CUDA_CHECK(cudaMalloc(&d_y, sizeof(float)*np2));
 
 
-  CUDA_CHECK(cudaMemset(d_y, 0, sizeof(float)*np2));
+//  CUDA_CHECK(cudaMemset(d_y, 0, sizeof(float)*np2));
   
   std::vector<float> rv(n);  // gpu result
   /*
@@ -292,31 +317,34 @@ int main(int argc, char** argv) {
   CUDA_CHECK(cudaMemcpy(d_f, flags.data(), sizeof(float)*n,
 			cudaMemcpyHostToDevice));
 
-  std::vector<float> flags_scan(n);
-  float* d_fs;
-  CUDA_CHECK(cudaMalloc(&d_fs, sizeof(float)*np2));
+//  std::vector<float> flags_scan(n);
+//  float* d_fs;
+//  CUDA_CHECK(cudaMalloc(&d_fs, sizeof(float)*np2));
 
-  std::vector<float> sums(nblocks), sumscan(nblocks), sums_flags(nblocks), sums_fs(nblocks);
-  float* d_sums, *d_sumscan, *d_sums_flags, *d_sums_fs;
-  CUDA_CHECK(cudaMalloc(&d_sums, sizeof(float)*nblocks));
-  CUDA_CHECK(cudaMalloc(&d_sumscan, sizeof(float)*nblocks));
-  CUDA_CHECK(cudaMalloc(&d_sums_flags, sizeof(float)*nblocks));
-  CUDA_CHECK(cudaMalloc(&d_sums_fs, sizeof(float)*nblocks));
+//  std::vector<float> sums(nblocks), sumscan(nblocks), sums_flags(nblocks), sums_fs(nblocks);
+//  float* d_sums, *d_sumscan, *d_sums_flags, *d_sums_fs;
+//  CUDA_CHECK(cudaMalloc(&d_sums, sizeof(float)*nblocks));
+//  CUDA_CHECK(cudaMalloc(&d_sumscan, sizeof(float)*nblocks));
+//  CUDA_CHECK(cudaMalloc(&d_sums_flags, sizeof(float)*nblocks));
+//  CUDA_CHECK(cudaMalloc(&d_sums_fs, sizeof(float)*nblocks));
 
   cudaMemset(d_x, 0.0, sizeof(float)*np2);
   cudaMemcpy(d_x, x.data(), sizeof(float)*n, cudaMemcpyHostToDevice);
-  cudaMemset(d_y, 0.0, sizeof(float)*np2);
+//  cudaMemset(d_y, 0.0, sizeof(float)*np2);
   
   cudaDeviceSynchronize();
 
   printf("calling segscan<<<%d,%d>>> of %d elements.\n",
 	 nblocks, blocksize, n);
   begin = std::chrono::high_resolution_clock::now();
-  segscan<<<nblocks, blocksize, 6*blocksize*sizeof(float)>>>(d_x, d_y, d_f, d_fs, d_sums, d_sums_flags, blocksize * 2);
+//    for (size_t i = 0; i < nblocks; i += block_n) {
+//      size_t data_offset = i * block_n;
+//      segscan<<<nblocks, blocksize, 3*block_n*sizeof(float)>>>(d_x + data_offset, d_y + data_offset, d_f + data_offset, d_fs, d_sums, d_sums_flags, block_n);
+//      segscan<<<1, (nblocks+2-1)/2, 3*nblocks*sizeof(float)>>>(d_sums, d_sumscan, d_sums_flags, d_sums_fs, nullptr, nullptr, nblocks);
+//      add_offsets<<<(np2+blocksize-1)/blocksize, blocksize>>>(d_y + data_offset, d_fs, d_sumscan, np2);
+//    }
 
-  segscan<<<1, (nblocks+2-1)/2, 3*nblocks*sizeof(float)>>>(d_sums, d_sumscan, d_sums_flags, d_sums_fs, nullptr, nullptr, nblocks);
-
-  add_offsets<<<(np2+blocksize-1)/blocksize, blocksize>>>(d_y, d_fs, d_sumscan, np2);
+  d_y = run_segscan(d_x, d_f, n);
 
   cudaDeviceSynchronize();
   end = std::chrono::high_resolution_clock::now();
